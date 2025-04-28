@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Farm Control</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: 'Poppins', sans-serif;
+      background: linear-gradient(to right, #83a4d4, #b6fbff);
+      color: #333;
+    }
+
+    .container {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .section {
+      background: #fff;
+      border-radius: 15px;
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+      padding: 20px;
+      width: 300px;
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+
+    .section:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    h3 {
+      text-align: center;
+      margin-bottom: 15px;
+      color: #4e54c8;
+    }
+
+    input, button {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 10px;
+      font-size: 1em;
+    }
+
+    input {
+      background: #f0f0f0;
+    }
+
+    button {
+      background: #4e54c8;
+      color: white;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    button:hover:not(:disabled) {
+      background: #5c6bc0;
+    }
+
+    #events {
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.9em;
+      line-height: 1.4;
+      border-top: 1px solid #ddd;
+      padding-top: 10px;
+      animation: fadeIn 0.5s;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .status-box {
+      background: #f9f9f9;
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 10px;
+      text-align: center;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="section">
+      <h3>WebSocket Connection</h3>
+      <input type="text" id="ip" placeholder="IP" value="127.0.0.1">
+      <input type="number" id="port" placeholder="Port" value="5281">
+      <button id="connectBtn">Connect</button>
+      <p id="connStatus" class="status-box">Not connected</p>
+
+      <h3>Watering Control</h3>
+      <button id="onBtn" disabled>Start Watering</button>
+      <button id="offBtn" disabled>Stop Watering</button>
+    </div>
+
+    <div class="section">
+      <h3>Sensor Data</h3>
+      <div id="sensor" class="status-box">Humidity: –</div>
+
+      <h3>Weather Forecast</h3>
+      <div id="weather" class="status-box">–</div>
+
+      <h3>System Status</h3>
+      <div id="status" class="status-box">–</div>
+    </div>
+
+    <div class="section">
+      <h3>Event History</h3>
+      <div id="events"></div>
+    </div>
+  </div>
+
+  <script>
+    let ws;
+    const eventHistory = JSON.parse(localStorage.getItem('farm_events') || '[]');
+    const sensorData   = localStorage.getItem('farm_sensor') || 'Humidity: –';
+    const weatherData  = localStorage.getItem('farm_weather') || '–';
+    const statusData   = localStorage.getItem('farm_status') || '–';
+
+    const eventsDiv    = document.getElementById('events');
+    const connStatus   = document.getElementById('connStatus');
+    const onBtn        = document.getElementById('onBtn');
+    const offBtn       = document.getElementById('offBtn');
+
+    // Отображение сохранённых данных
+    document.getElementById('sensor').textContent  = sensorData;
+    document.getElementById('weather').textContent = weatherData;
+    document.getElementById('status').textContent  = statusData;
+    eventsDiv.innerHTML = eventHistory.join('<br>');
+
+    function pushEvent(msg) {
+      eventHistory.push(`${new Date().toLocaleString()} [EVENT]: ${msg}`);
+      if (eventHistory.length > 20) eventHistory.shift();
+      localStorage.setItem('farm_events', JSON.stringify(eventHistory));
+      eventsDiv.innerHTML = eventHistory.join('<br>');
+    }
+
+    document.getElementById('connectBtn').onclick = () => {
+      const ip   = document.getElementById('ip').value;
+      const port = document.getElementById('port').value;
+      if (ws) ws.close();
+      ws = new WebSocket(`ws://${ip}:${port}/ws`);
+      
+      ws.onopen = () => {
+        connStatus.textContent = 'Connected';
+        connStatus.style.backgroundColor = '#a5d6a7';
+        onBtn.disabled  = false;
+        offBtn.disabled = false;
+        pushEvent('WebSocket connected');
+      };
+
+      ws.onclose = () => {
+        connStatus.textContent = 'Disconnected';
+        connStatus.style.backgroundColor = '#ef9a9a';
+        onBtn.disabled  = true;
+        offBtn.disabled = true;
+        pushEvent('WebSocket disconnected');
+      };
+
+      ws.onerror = (e) => {
+        pushEvent(`WebSocket error: ${e.message}`);
+      };
+
+      ws.onmessage = e => {
+        const data = JSON.parse(e.data);
+        pushEvent(`${data.timestamp} [${data.type.toUpperCase()}]: ${data.data}`);
+        switch (data.type) {
+          case 'sensor':
+            document.getElementById('sensor').textContent = `Humidity: ${data.data}%`;
+            localStorage.setItem('farm_sensor', `Humidity: ${data.data}%`);
+            break;
+          case 'weather':
+            document.getElementById('weather').textContent = data.data;
+            localStorage.setItem('farm_weather', data.data);
+            break;
+          case 'status':
+            document.getElementById('status').textContent = data.data;
+            localStorage.setItem('farm_status', data.data);
+            break;
+          case 'watering':
+            document.getElementById('status').textContent = `Watering is ${data.data}`;
+            localStorage.setItem('farm_status', `Watering is ${data.data}`);
+            break;
+        }
+      };
+    };
+
+    document.getElementById('onBtn').onclick  = () => ws.send('WATER_ON');
+    document.getElementById('offBtn').onclick = () => ws.send('WATER_OFF');
+  </script>
+</body>
+</html>
